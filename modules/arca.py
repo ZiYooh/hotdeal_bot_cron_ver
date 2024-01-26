@@ -3,7 +3,7 @@ import time
 import os
 import sys
 import requests
-import mariadb
+import asyncio
 
 from bs4 import BeautifulSoup
 from mariadb import ProgrammingError
@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 from utils import mylogger
 from utils import mywebhook
 from utils import mydb
+from utils import tg_bot_control
 
 
 # Logger Setting Start
@@ -38,14 +39,15 @@ select_count_query = ""
 
 temp_msg = ""
 
-def run_scraping(mode_all, mode_category, mode_keyword, discord_webhook):
-    logger.info("[아카라이브 핫딜 채널 크롤링 시작]")
-    logger.info("===========================================")
+# def run_scraping(mode_all, mode_category, mode_keyword, discord_webhook):
+def run_scraping(mode_all, mode_category, mode_keyword):
+    logger.debug("[아카라이브 핫딜 채널 크롤링 시작]")
+    logger.debug("===========================================")
     
     # 페이지 소스 가져오기
     response = requests.get(arca_url)
     if response.status_code == 200:
-        logger.info("HTTP 응답 코드: " + str(response.status_code))
+        logger.debug("HTTP 응답 코드: " + str(response.status_code))
         html = response.text
         
         # Soup에 HTML 데이터 넣어주기
@@ -75,46 +77,73 @@ def run_scraping(mode_all, mode_category, mode_keyword, discord_webhook):
                 select_count_result = 0
                 
                 try:
-                    select_count_query = "SELECT count (*) FROM arca_list WHERE num=" + temp_num + ";"
+                    select_count_query = "SELECT count(*) FROM arca_list WHERE num=" + temp_num + ";"
                     select_count_result = mydb.run_query_return_one(cursor, select_count_query)[0]
                     cursor.close()
-                except ProgrammingError:
+                except ProgrammingError as e:
+                    logger.error(e)
                     pass
                 
-                if select_count_result > 0:
+                if select_count_result < 1:
                     insert_data_query = "INSERT INTO arca_list (num, category, title, price, delivery, link, time) VALUES (?, ?, ?, ?, ?, ?, ?)"
                     cursor = mydb.get_cursor(conn)
                     cursor.execute(insert_data_query, (int(temp_num), temp_category, temp_title, temp_price, temp_delivery, temp_link, temp_time))
                     conn.commit()
-                    cursor.close()    
+                    cursor.close()
 
                     if new_post_flag == 0:
                         new_post_flag = 1
 
                     if mode_all == True:
-                        temp_msg = mywebhook.get_msg_header_all(temp_category, temp_title, temp_price, temp_link)
-                        logger.info(temp_msg)
-                        mywebhook.send_discord_webhook(discord_webhook, temp_msg)
+                        # temp_msg = mywebhook.get_msg_header_all(temp_category, temp_title, temp_price, temp_link)
+                        temp_msg = tg_bot_control.get_msg_header_all(temp_category, temp_title, temp_price, temp_link)
+                        logger.info("알림 메세지 발송\n" + temp_msg)
+                        # mywebhook.send_discord_webhook(discord_webhook, temp_msg)
+                        asyncio.run(tg_bot_control.send_telegram_message(temp_msg))
                         time.sleep(3)
+                        logger.info("==========================================")
                         
                     else:
                         if mode_category == True:
-                            return
-                        elif mode_keyword == True:
-                            return
-                        else:
-                            # TODO: DB와 연계하여 에러 핸들링
-                            logger.error("모드 설정 오류가 발생하였습니다.")
-                            return
-                
+                            cursor = mydb.get_cursor(conn)
+                            select_category_query = "SELECT category FROM conf_category WHERE uid=1 and site='arca'"
+                            select_category_result = mydb.run_query_return_all(cursor, select_category_query)
+                            cursor.close()
+                            
+                            for selected_category in select_category_result:
+                                if selected_category[0] in temp_category:
+                                    # temp_msg = mywebhook.get_msg_header_category(selected_category[0], temp_category, temp_title, temp_price, temp_link)
+                                    temp_msg = tg_bot_control.get_msg_header_category(selected_category[0], temp_category, temp_title, temp_price, temp_link)
+                                    logger.info("알림 메세지 발송\n" + temp_msg)
+                                    # mywebhook.send_discord_webhook(discord_webhook, temp_msg)
+                                    asyncio.run(tg_bot_control.send_telegram_message(temp_msg))
+                                    time.sleep(3)
+                                    logger.info("==========================================")
+                        
+                        if mode_keyword == True:
+                            cursor = mydb.get_cursor(conn)
+                            select_keyword_query = "SELECT keyword FROM conf_keyword WHERE uid=1 and site='arca'"
+                            select_keyword_result = mydb.run_query_return_all(cursor, select_keyword_query)
+                            cursor.close()
+                            
+                            for selected_keyword in select_keyword_result:
+                                if selected_keyword[0] in temp_title:
+                                    # temp_msg = mywebhook.get_msg_header_keyword(selected_keyword[0], temp_category, temp_title, temp_price, temp_link)
+                                    temp_msg = tg_bot_control.get_msg_header_keyword(selected_keyword[0], temp_category, temp_title, temp_price, temp_link)
+                                    logger.info("알림 메세지 발송\n" + temp_msg)
+                                    # mywebhook.send_discord_webhook(discord_webhook, temp_msg)
+                                    asyncio.run(tg_bot_control.send_telegram_message(temp_msg))
+                                    time.sleep(3)
+                                    logger.info("==========================================")
+                    
                 mydb.close_db_server(conn)
             
 
         if new_post_flag == 0:
-            logger.info("새로운 글이 없습니다.")
+            logger.debug("새로운 글이 없습니다.")
         
-        logger.info("==========================================")
-        logger.info("[아카라이브 핫딜 채널 크롤링 종료]")
+        logger.debug("==========================================")
+        logger.debug("[아카라이브 핫딜 채널 크롤링 종료]")
         
     else:
         logger.error("통신 에러가 발생하였습니다.")

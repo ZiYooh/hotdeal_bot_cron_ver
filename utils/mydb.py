@@ -20,7 +20,7 @@ def connect_to_db_server():
     _port = None
     _database = None
     
-    with open ('../conf/db.conf', 'r') as file:
+    with open ('conf/db.conf', 'r') as file:
         line = None
         while line != '':
             line = file.readline().strip('\n')
